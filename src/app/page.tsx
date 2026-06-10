@@ -31,10 +31,8 @@ import {
   triggerHaptic,
   triggerScreenShake,
   triggerScreenFlash,
-  showScorePopup,
   showToast,
   addStars,
-  getStars,
   burstConfetti,
 } from "@/lib/game-utils";
 
@@ -77,16 +75,10 @@ export default function Home() {
   // Level entry animation
   const [levelEntry, setLevelEntry] = useState<number | null>(null);
 
-  // Stars count
-  const [stars, setStars] = useState(0);
-
   // Load saved state
   useEffect(() => {
     const timer = setTimeout(() => {
       const savedStep = localStorage.getItem("birthday_surprise_step");
-      const savedStars = getStars();
-      setStars(savedStars);
-
       if (savedStep) {
         const numStep = parseInt(savedStep, 10);
         setStep(numStep >= 1 && numStep <= TOTAL_LEVELS ? numStep : 1);
@@ -146,7 +138,6 @@ export default function Home() {
       // Award stars on level completion
       const starReward = targetLevel * 2;
       addStars(starReward);
-      setStars(getStars());
 
       // Show transition
       setPrevStep(step);
@@ -252,7 +243,6 @@ export default function Home() {
     setCakeBlown(false);
     setMusicPlaying(false);
     setShowPinInterface(false);
-    setStars(0);
     showToast("Journey Reset! Starting over...", "info", "🔄");
   };
 

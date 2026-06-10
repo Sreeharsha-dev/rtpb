@@ -208,11 +208,31 @@ export function getLevelIcon(level: number): string {
 
 // ============ AUDIO ============
 
-export const playMagicalSound = (type: 'tap' | 'success' | 'failure' | 'sparkle' | 'type') => {
-  if (typeof window === "undefined") return;
+let sharedAudioCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  if (sharedAudioCtx && sharedAudioCtx.state !== "closed") {
+    if (sharedAudioCtx.state === "suspended") {
+      sharedAudioCtx.resume();
+    }
+    return sharedAudioCtx;
+  }
   try {
-    const AudioCtx = window.AudioContext || (window as unknown as Record<string, new () => AudioContext>)["webkitAudioContext"];
-    const ctx = new AudioCtx();
+    const AudioCtxClass = window.AudioContext || (window as unknown as Record<string, new () => AudioContext>)["webkitAudioContext"];
+    if (!AudioCtxClass) return null;
+    sharedAudioCtx = new AudioCtxClass();
+    return sharedAudioCtx;
+  } catch {
+    return null;
+  }
+}
+
+export const playMagicalSound = (type: 'tap' | 'success' | 'failure' | 'sparkle' | 'type') => {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  
+  try {
     const now = ctx.currentTime;
     
     if (type === 'tap') {
@@ -298,7 +318,7 @@ export const playMagicalSound = (type: 'tap' | 'success' | 'failure' | 'sparkle'
       osc.start();
       osc.stop(now + 0.03);
     }
-  } catch (e) {
+  } catch {
     // Silently fail
   }
 };
