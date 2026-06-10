@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { Eye, RefreshCw, CheckCircle2 } from "lucide-react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { Eye, RefreshCw, CheckCircle2, Timer } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 
@@ -13,49 +13,64 @@ interface Piece {
   id: number;
   correctCol: number;
   correctRow: number;
-  x: number; // current absolute x relative to container
-  y: number; // current absolute y relative to container
+  x: number;
+  y: number;
   isLocked: boolean;
 }
 
 const BOARD_SIZE = 270;
 const GRID_SIZE = 3;
-const PIECE_SIZE = BOARD_SIZE / GRID_SIZE; // 90px
+const PIECE_SIZE = BOARD_SIZE / GRID_SIZE;
 
 export default function JigsawPuzzle({ onComplete }: JigsawPuzzleProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [imageUrl, setImageUrl] = useState<string>("/naruto_puzzle_bg.png");
+  const [imageUrl] = useState<string>("/naruto_puzzle_bg.png");
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [progress, setProgress] = useState(0);
   const [gameCompleted, setGameCompleted] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  
-  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [moves, setMoves] = useState(0);
+  const startTimeRef = useRef(Date.now());
+  const [elapsed, setElapsed] = useState(0);
+  const [shakePieceIds, setShakePieceIds] = useState<number[]>([]);
 
-  // Clean up timer on unmount
+  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     return () => {
-      if (previewTimeoutRef.current) {
-        clearTimeout(previewTimeoutRef.current);
-      }
+      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  // Initialize and shuffle pieces
-  const initializePuzzle = (imgUrl: string = imageUrl) => {
+  // Timer
+  useEffect(() => {
+    if (gameCompleted) return;
+    const start = startTimeRef.current;
+    timerRef.current = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [gameCompleted]);
+
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  const initializePuzzle = () => {
     const newPieces: Piece[] = [];
-    
-    // Scatter the pieces in the tray area (y: 320 to 400)
     for (let r = 0; r < GRID_SIZE; r++) {
       for (let c = 0; c < GRID_SIZE; c++) {
         const id = r * GRID_SIZE + c;
-        
-        // Random placement in the tray below the board
         const randomX = Math.random() * (BOARD_SIZE - PIECE_SIZE);
         const randomY = 285 + Math.random() * 45;
-
         newPieces.push({
           id,
           correctCol: c,
@@ -66,148 +81,144 @@ export default function JigsawPuzzle({ onComplete }: JigsawPuzzleProps) {
         });
       }
     }
-    
     setPieces(newPieces);
     setGameCompleted(false);
     setProgress(0);
+    setMoves(0);
   };
 
-  // Run on mount
   useEffect(() => {
     initializePuzzle();
-  }, [imageUrl]);
+  }, []);
 
-  // Handle showing the full image preview overlay for 4 seconds
   const handleShowPreview = () => {
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current);
-    }
+    if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
     setShowPreview(true);
     previewTimeoutRef.current = setTimeout(() => {
       setShowPreview(false);
     }, 4000);
   };
 
-  // Pointer Down
   const handlePointerDown = (id: number, e: React.PointerEvent<HTMLDivElement>) => {
-    const piece = pieces.find(p => p.id === id);
+    const piece = pieces.find((p) => p.id === id);
     if (!piece || piece.isLocked || gameCompleted) return;
 
     setDraggingId(id);
-    
-    // Calculate offset of pointer from piece top-left
     const rect = e.currentTarget.getBoundingClientRect();
     setDragOffset({
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
     });
-
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  // Pointer Move
   const handlePointerMove = (id: number, e: React.PointerEvent<HTMLDivElement>) => {
     if (draggingId !== id || !containerRef.current) return;
-
     const containerRect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - containerRect.left - dragOffset.x;
     const y = e.clientY - containerRect.top - dragOffset.y;
-
-    // Constrain inside container bounds
     const maxX = containerRect.width - PIECE_SIZE;
     const maxY = containerRect.height - PIECE_SIZE;
     const boundedX = Math.max(0, Math.min(x, maxX));
     const boundedY = Math.max(0, Math.min(y, maxY));
 
-    setPieces(prev =>
-      prev.map(p => (p.id === id ? { ...p, x: boundedX, y: boundedY } : p))
+    setPieces((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, x: boundedX, y: boundedY } : p))
     );
   };
 
-  // Pointer Up (Snapping Logic)
   const handlePointerUp = (id: number, e: React.PointerEvent<HTMLDivElement>) => {
     if (draggingId !== id) return;
     setDraggingId(null);
     e.currentTarget.releasePointerCapture(e.pointerId);
 
-    const piece = pieces.find(p => p.id === id);
+    const piece = pieces.find((p) => p.id === id);
     if (!piece) return;
 
-    // Calculate correct position on board (top: 0, left: 0 relative to board)
     const targetX = piece.correctCol * PIECE_SIZE;
     const targetY = piece.correctRow * PIECE_SIZE;
-
-    // Calculate distance to target
     const distance = Math.hypot(piece.x - targetX, piece.y - targetY);
 
-    // If within 35px threshold, snap and lock
     if (distance < 35) {
-      setPieces(prev => {
-        const updated = prev.map(p =>
+      setMoves((m) => m + 1);
+      setPieces((prev) => {
+        const updated = prev.map((p) =>
           p.id === id ? { ...p, x: targetX, y: targetY, isLocked: true } : p
         );
-
-        // Check overall completion
-        const lockedCount = updated.filter(p => p.isLocked).length;
+        const lockedCount = updated.filter((p) => p.isLocked).length;
         const newProgress = Math.round((lockedCount / 9) * 100);
         setProgress(newProgress);
 
         if (lockedCount === 9) {
           setGameCompleted(true);
           confetti({
-            particleCount: 120,
-            spread: 80,
-            origin: { y: 0.6 }
+            particleCount: 150,
+            spread: 100,
+            origin: { y: 0.5 },
+            colors: ["#f59e0b", "#ec4899", "#a78bfa", "#10b981"],
           });
+          setTimeout(() => {
+            confetti({ particleCount: 80, spread: 60, origin: { x: 0.3, y: 0.4 } });
+          }, 300);
         }
-
         return updated;
       });
+    } else {
+      // Shake on fail
+      setShakePieceIds((prev) => [...prev, id]);
+      setTimeout(() => {
+        setShakePieceIds((prev) => prev.filter((pid) => pid !== id));
+      }, 400);
     }
   };
 
   return (
     <div className="flex flex-col items-center w-full max-w-md mx-auto">
-      
-      {/* Title */}
-      <div className="w-full p-2.5 glassmorphic rounded-xl glow-pink border-pink-500/20 mb-2 text-center">
-        <h3 className="text-xs font-bold text-pink-400 uppercase tracking-wider font-mono">
+      <div className="w-full p-2.5 glassmorphic rounded-xl glow-pink border-pink-500/20 mb-2 text-center relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-pink-500/5 to-transparent animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
+        <h3 className="text-xs font-bold text-pink-400 uppercase tracking-wider font-mono relative z-10">
           Naruto Jigsaw Challenge 🍥
         </h3>
-        <p className="text-[10px] text-violet-300 mt-1">
-          Drag scrambled pieces from the tray and snap them into correct slots!
+        <p className="text-[10px] text-violet-300 mt-1 relative z-10">
+          Drag scrambled pieces and snap them into correct slots!
         </p>
       </div>
 
-      {/* View Full Image and Reset */}
-      <div className="flex justify-between items-center w-full mb-4 px-2">
-        <button
-          type="button"
-          onClick={handleShowPreview}
-          disabled={showPreview || gameCompleted}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-pink-900/50 hover:bg-pink-800/50 text-pink-200 border border-pink-500/30 text-xs font-semibold cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Eye className="w-3.5 h-3.5" />
-          {showPreview ? "Viewing Image..." : "View Full Image"}
-        </button>
+      {/* Stats bar */}
+      {!gameCompleted && (
+        <div className="flex justify-between items-center w-full mb-2 px-1 max-w-[270px]">
+          <div className="flex items-center gap-1 text-[9px] text-violet-400 font-mono">
+            <Timer className="w-2.5 h-2.5" />
+            {formatTime(elapsed)}
+          </div>
+          <div className="text-[9px] text-violet-400 font-mono">
+            Moves: {moves}
+          </div>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={handleShowPreview}
+              disabled={showPreview || gameCompleted}
+              className="p-1.5 rounded-lg bg-pink-900/50 hover:bg-pink-800/50 text-pink-200 border border-pink-500/30 text-[9px] cursor-pointer transition-all disabled:opacity-50"
+            >
+              <Eye className="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              onClick={initializePuzzle}
+              className="p-1.5 rounded-lg bg-slate-900/50 hover:bg-slate-800/50 text-violet-200 border border-violet-500/30 text-[9px] cursor-pointer transition-all"
+            >
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+      )}
 
-        <button
-          type="button"
-          onClick={() => initializePuzzle()}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/50 hover:bg-slate-800/50 text-violet-200 border border-violet-500/30 text-xs font-semibold cursor-pointer transition-all"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Reset Game
-        </button>
-      </div>
-
-      {/* Main Drag-and-Drop Container */}
       {!gameCompleted && (
         <div
           ref={containerRef}
           className="relative w-[270px] h-[420px] bg-slate-950/40 backdrop-blur-xl border border-violet-500/20 rounded-2xl overflow-hidden shadow-2xl shadow-violet-950/30 mb-2"
         >
-          {/* Full Image Overlay for Preview */}
           <AnimatePresence>
             {showPreview && (
               <motion.div
@@ -224,7 +235,6 @@ export default function JigsawPuzzle({ onComplete }: JigsawPuzzleProps) {
             )}
           </AnimatePresence>
 
-          {/* The Grid Board Area (Top 270x270) */}
           <div className="absolute top-0 left-0 w-[270px] h-[270px] bg-slate-950/50 grid grid-cols-3 grid-rows-3 border-b border-violet-500/10">
             {[...Array(9)].map((_, i) => (
               <div
@@ -238,16 +248,18 @@ export default function JigsawPuzzle({ onComplete }: JigsawPuzzleProps) {
             ))}
           </div>
 
-          {/* Shuffled/Draggable Pieces */}
-          {pieces.map(piece => {
+          {pieces.map((piece) => {
             const isDragging = draggingId === piece.id;
+            const isShaking = shakePieceIds.includes(piece.id);
 
             return (
-              <div
+              <motion.div
                 key={piece.id}
                 onPointerDown={(e) => handlePointerDown(piece.id, e)}
                 onPointerMove={(e) => handlePointerMove(piece.id, e)}
                 onPointerUp={(e) => handlePointerUp(piece.id, e)}
+                animate={isShaking ? { x: [0, -5, 5, -3, 3, 0] } : {}}
+                transition={isShaking ? { duration: 0.3 } : {}}
                 className={`absolute w-[90px] h-[90px] cursor-grab active:cursor-grabbing rounded-sm transition-shadow duration-200 select-none touch-none ${
                   piece.isLocked
                     ? "border border-emerald-500/40 shadow-none pointer-events-none"
@@ -261,27 +273,30 @@ export default function JigsawPuzzle({ onComplete }: JigsawPuzzleProps) {
                   backgroundPosition: `${-piece.correctCol * PIECE_SIZE}px ${-piece.correctRow * PIECE_SIZE}px`,
                   boxSizing: "border-box",
                   zIndex: isDragging ? 50 : piece.isLocked ? 10 : 20,
-                  transform: isDragging 
-                    ? "scale(1.08) rotate(3deg)" 
+                  transform: isDragging
+                    ? "scale(1.08) rotate(3deg)"
                     : "scale(1) rotate(0deg)",
-                  boxShadow: isDragging 
-                    ? "0 15px 25px rgba(0, 0, 0, 0.45), 0 0 10px rgba(139, 92, 246, 0.2)" 
+                  boxShadow: isDragging
+                    ? "0 15px 25px rgba(0, 0, 0, 0.45), 0 0 10px rgba(139, 92, 246, 0.2)"
                     : "",
-                  transition: isDragging 
-                    ? "transform 0.15s ease-out, box-shadow 0.15s ease-out" 
+                  transition: isDragging
+                    ? "transform 0.15s ease-out, box-shadow 0.15s ease-out"
                     : "top 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), left 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.25s ease",
                 }}
               >
                 {piece.isLocked && (
-                  <div className="absolute top-1 right-1 bg-emerald-500/90 text-white rounded-full p-0.5 shadow-sm scale-100 transition-all duration-300">
-                    <CheckCircle2 className="w-3.5 h-3.5 animate-[bounce_0.4s_ease]" />
-                  </div>
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="absolute top-1 right-1 bg-emerald-500/90 text-white rounded-full p-0.5 shadow-sm"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  </motion.div>
                 )}
-              </div>
+              </motion.div>
             );
           })}
 
-          {/* Shuffled Tray Background Title */}
           <div className="absolute bottom-4 left-0 right-0 text-center pointer-events-none select-none">
             <p className="text-[10px] uppercase tracking-wider text-violet-400/40 font-semibold">
               Pieces Tray
@@ -290,39 +305,41 @@ export default function JigsawPuzzle({ onComplete }: JigsawPuzzleProps) {
         </div>
       )}
 
-      {/* Progress Bar */}
       {!gameCompleted && (
-        <div className="w-full mt-2 px-2">
-          <div className="flex justify-between items-center text-xs font-semibold text-violet-300 mb-1">
-            <span>Puzzle Progress</span>
-            <span>{progress}%</span>
-          </div>
-          <div className="w-full h-2 rounded-full bg-violet-950/65 border border-violet-500/20 overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-violet-600 to-pink-500 rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
+        <div className="w-full max-w-[270px] mt-1">
+          <div className="w-full h-1.5 rounded-full bg-violet-950/65 border border-violet-500/20 overflow-hidden">
+            <motion.div
+              className="h-full bg-gradient-to-r from-violet-600 to-pink-500 rounded-full"
+              animate={{ width: `${progress}%` }}
+              transition={{ type: "spring", stiffness: 50, damping: 15 }}
             />
           </div>
         </div>
       )}
 
-      {/* Completed Success Prompt */}
       {gameCompleted && (
         <div className="w-full p-5 glassmorphic rounded-2xl glow-gold border-amber-500/40 text-center flex flex-col items-center">
-          <div className="w-12 h-12 rounded-full bg-amber-950/60 border border-amber-500/40 flex items-center justify-center mb-3">
+          <motion.div
+            animate={{ rotate: [0, 360] }}
+            transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+            className="w-12 h-12 rounded-full bg-amber-950/60 border border-amber-500/40 flex items-center justify-center mb-3"
+          >
             <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-          </div>
+          </motion.div>
           <h4 className="text-md font-bold text-amber-200">Naruto Challenge Completed!</h4>
+          <p className="text-[10px] text-violet-400 font-mono mb-1">Moves: {moves} | Time: {formatTime(elapsed)}</p>
           <p className="text-sm italic font-serif text-violet-100 mt-2 mb-4 px-2 leading-relaxed">
             &ldquo;Just like Naruto never gave up, may you always chase your dreams fearlessly.&rdquo;
           </p>
-          <button
+          <motion.button
             type="button"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={onComplete}
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-pink-500 text-white font-extrabold text-xs shadow-md shadow-pink-500/20 cursor-pointer"
+            className="game-button"
           >
             Continue Journey 🌸
-          </button>
+          </motion.button>
         </div>
       )}
     </div>
